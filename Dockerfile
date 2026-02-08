@@ -3,6 +3,9 @@
 # # ============================================================
 FROM ubuntu:24.04 AS builder
 
+# Control whether the web app (Model Manager UI) is built
+ARG BUILD_WEB_APP=ON
+
 # Avoid interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -14,6 +17,9 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     pkg-config \
     git \
+    && if [ "$BUILD_WEB_APP" = "ON" ]; then \
+        apt-get install -y nodejs npm; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
@@ -22,7 +28,7 @@ WORKDIR /app
 
 # Build the project
 RUN rm -rf build && \
-    cmake --preset default && \
+    cmake --preset default -DBUILD_WEB_APP=${BUILD_WEB_APP} && \
     cmake --build --preset default
 
 # Debug: Check build outputs
