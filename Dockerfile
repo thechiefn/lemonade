@@ -26,6 +26,17 @@ RUN apt-get update && apt-get install -y \
 COPY . /app
 WORKDIR /app
 
+# Materialize web-app symlinks (Windows/WSL Docker builds can drop symlink targets)
+RUN if [ -L src/web-app/assets ]; then \
+        rm -f src/web-app/assets && cp -r src/app/assets src/web-app/assets; \
+    fi && \
+    if [ -L src/web-app/src ]; then \
+        rm -f src/web-app/src && cp -r src/app/src src/web-app/src; \
+    fi && \
+    if [ -L src/web-app/styles.css ]; then \
+        rm -f src/web-app/styles.css && cp src/app/styles.css src/web-app/styles.css; \
+    fi
+
 # Build the project
 RUN rm -rf build && \
     cmake --preset default -DBUILD_WEB_APP=${BUILD_WEB_APP} && \
