@@ -3,7 +3,6 @@
 # # ============================================================
 FROM ubuntu:24.04 AS builder
 
-# Control whether the web app (Model Manager UI) is built
 ARG BUILD_WEB_APP=ON
 
 # Avoid interactive prompts during build
@@ -16,25 +15,23 @@ RUN apt-get update && apt-get install -y \
     ninja-build \
     libssl-dev \
     pkg-config \
+    nodejs \
+    npm \
     git \
-    && if [ "$BUILD_WEB_APP" = "ON" ]; then \
-        apt-get install -y nodejs npm; \
-    fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
 COPY . /app
 WORKDIR /app
 
-# Materialize web-app symlinks (Windows/WSL Docker builds can drop symlink targets)
-RUN if [ -L src/web-app/assets ]; then \
-        rm -f src/web-app/assets && cp -r src/app/assets src/web-app/assets; \
-    fi && \
-    if [ -L src/web-app/src ]; then \
-        rm -f src/web-app/src && cp -r src/app/src src/web-app/src; \
-    fi && \
-    if [ -L src/web-app/styles.css ]; then \
-        rm -f src/web-app/styles.css && cp src/app/styles.css src/web-app/styles.css; \
+# Ensure web-app assets are real files (not symlink) for Docker build context
+# Also replace favicon symlinks (docs/ is excluded from build context)
+RUN if [ "$BUILD_WEB_APP" = "ON" ]; then \
+        rm -rf /app/src/web-app/assets && \
+        cp -r /app/src/app/assets /app/src/web-app/assets && \
+        rm -f /app/src/app/assets/favicon.ico /app/src/web-app/assets/favicon.ico && \
+        printf '\0' > /app/src/app/assets/favicon.ico && \
+        cp /app/src/app/assets/favicon.ico /app/src/web-app/assets/favicon.ico; \
     fi
 
 # Build the project
