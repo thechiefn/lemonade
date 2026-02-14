@@ -137,7 +137,7 @@ MOCK_HARDWARE_CONFIGS = {
         "expected_supported": {
             "llamacpp": ["vulkan", "rocm", "cpu"],
             "whispercpp": ["cpu"],  # cpu backend available on x86_64
-            "sd-cpp": ["cpu"],
+            "sd-cpp": ["cpu", "rocm"],
         },
         "expected_unsupported": {
             "llamacpp": ["metal"],
@@ -190,6 +190,7 @@ MOCK_HARDWARE_CONFIGS = {
         },
         "expected_unsupported": {
             "llamacpp": ["metal"],
+            "sd-cpp": ["rocm"],
         },
     },
     # Windows x86_64 with no AMD GPU (Intel/NVIDIA only)
@@ -233,6 +234,7 @@ MOCK_HARDWARE_CONFIGS = {
             "llamacpp": ["metal", "rocm"],
             "whispercpp": ["npu"],  # npu backend requires XDNA2 NPU
             # NPU recipes unsupported: CPU is "Intel Core i9-13900K" (no Ryzen AI)
+            "sd-cpp": ["rocm"],
             "flm": ["default"],
             "ryzenai-llm": ["default"],
         },
@@ -276,6 +278,7 @@ MOCK_HARDWARE_CONFIGS = {
             "llamacpp": ["metal", "rocm"],  # rocm not supported on RDNA2
             "whispercpp": ["npu"],  # npu backend requires XDNA2 NPU
             # NPU recipes unsupported: CPU is "Ryzen 7 6800U" (no Ryzen AI)
+            "sd-cpp": ["rocm"],
             "flm": ["default"],
             "ryzenai-llm": ["default"],
         },
@@ -307,7 +310,7 @@ MOCK_HARDWARE_CONFIGS = {
         "expected_unsupported": {
             "llamacpp": ["vulkan", "rocm", "cpu"],
             "whispercpp": ["npu", "cpu"],  # whispercpp is Windows-only
-            "sd-cpp": ["cpu"],
+            "sd-cpp": ["cpu", "rocm"],
             "flm": ["default"],
             "ryzenai-llm": ["default"],
         },
@@ -340,6 +343,7 @@ MOCK_HARDWARE_CONFIGS = {
         "expected_unsupported": {
             "llamacpp": ["metal", "rocm"],
             "whispercpp": ["npu", "cpu"],  # whispercpp is Windows-only
+            "sd-cpp": ["rocm"],
             "flm": ["default"],
             "ryzenai-llm": ["default"],
         },
@@ -374,7 +378,7 @@ MOCK_HARDWARE_CONFIGS = {
         },
         "expected_supported": {
             "llamacpp": ["vulkan", "rocm", "cpu"],
-            "sd-cpp": ["cpu"],
+            "sd-cpp": ["cpu", "rocm"],
         },
         "expected_unsupported": {
             "llamacpp": ["metal"],
@@ -418,6 +422,7 @@ MOCK_HARDWARE_CONFIGS = {
         "expected_unsupported": {
             "llamacpp": ["metal", "rocm"],  # rocm not supported on RDNA2
             "whispercpp": ["npu", "cpu"],  # whispercpp is Windows-only
+            "sd-cpp": ["rocm"],
             "flm": ["default"],
             "ryzenai-llm": ["default"],
         },
