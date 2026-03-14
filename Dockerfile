@@ -3,6 +3,8 @@
 # # ============================================================
 FROM ubuntu:24.04 AS builder
 
+ARG BUILD_WEB_APP=ON
+
 # Avoid interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -13,6 +15,8 @@ RUN apt-get update && apt-get install -y \
     ninja-build \
     libssl-dev \
     pkg-config \
+    nodejs \
+    npm \
     libdrm-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
@@ -21,9 +25,19 @@ RUN apt-get update && apt-get install -y \
 COPY . /app
 WORKDIR /app
 
+# Ensure web-app assets are real files (not symlink) for Docker build context
+# Also replace favicon symlinks (docs/ is excluded from build context)
+RUN if [ "$BUILD_WEB_APP" = "ON" ]; then \
+        rm -rf /app/src/web-app/assets && \
+        cp -r /app/src/app/assets /app/src/web-app/assets && \
+        rm -f /app/src/app/assets/favicon.ico /app/src/web-app/assets/favicon.ico && \
+        printf '\0' > /app/src/app/assets/favicon.ico && \
+        cp /app/src/app/assets/favicon.ico /app/src/web-app/assets/favicon.ico; \
+    fi
+
 # Build the project
 RUN rm -rf build && \
-    cmake --preset default && \
+    cmake --preset default -DBUILD_WEB_APP=${BUILD_WEB_APP} && \
     cmake --build --preset default
 
 # Debug: Check build outputs
