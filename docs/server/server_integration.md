@@ -22,7 +22,7 @@ To identify if Lemonade Server is installed on a system, you can use the [`lemon
 lemonade-server --version
 ```
 
->Note: The `lemonade-server` CLI command is added to PATH when using the Windows Installer (lemonade-server-minimal.msi) and Debian Installer (lemonade-server-minimal_<VERSION>_amd64.deb).
+>Note: The `lemonade-server` CLI command is added to PATH when using the Windows Installer (lemonade-server-minimal.msi), Debian Installer (lemonade-server_<VERSION>_amd64.deb), or macOS Installer (Lemonade-<VERSION>-Darwin.pkg).
 
 ### Checking Server Status
 
@@ -73,7 +73,7 @@ If you want to install models on behalf of your users, the following tools are a
 
 - Adding new LLMs:
 
-  - The `user_models.json` file is similar to `server_models.json` (see above), but contains a user-specific registry that persists across lemonade updates. It is located at `$LEMONADE_CACHE_DIR/user_models.json`, which defaults to `~/.cache/lemonade/user_models.json`.
+  - The `user_models.json` file is similar to `server_models.json` (see above), but contains a user-specific registry that persists across lemonade updates. It is located at `$LEMONADE_CACHE_DIR/user_models.json`, which defaults to `~/.cache/lemonade/user_models.json`. For a full template and field reference, see the [Custom Model Configuration Guide](./custom-models.md).
   - [The `pull` endpoint in the server](./server_spec.md#post-apiv1pull) automates the process of registering models into `user_models.json` and downloading them.
   - The `lemonade-server pull` CLI command can also register and download new models, see [Options for pull](./lemonade-server-cli.md#options-for-pull).
 
@@ -101,7 +101,7 @@ By default, the server runs on port 8000. Optionally, you can specify a custom p
 lemonade-server serve --port 8123
 ```
 
-You can also prevent the server from showing a system tray icon by using the `--no-tray` flag (Windows only):
+You can also prevent the server from showing a system tray icon by using the `--no-tray` flag (Windows and macOS):
 
 ```bash
 lemonade-server serve --no-tray
@@ -187,6 +187,8 @@ msiexec /i lemonade.msi /qn ALLUSERS=1 INSTALLDIR="C:\Program Files (x86)\Lemona
 
 The Debian package installer handles all system configuration automatically, including setting up a systemd service for managing the Lemonade Server.
 
+On Linux, the package also recommends `ffmpeg` so whisper.cpp can resample and/or transcode audio inputs when needed.
+
 If you would prefer to manage the lifecycle of the server process manually, the service can be disabled and manually run as well.
 
 ### Systemd Service Management
@@ -231,17 +233,32 @@ sudo journalctl -u lemonade-server -f
 
 **Configuration:**
 
-The Lemonade Server systemd service is configured to read settings from `/etc/lemonade/lemonade.conf`. Environment variables defined in this file are passed to the server process. Edit this file to customize server behavior:
+The Lemonade Server systemd service reads configuration in this order:
+
+- `/etc/lemonade/lemonade.conf`
+- `/etc/lemonade/conf.d/*.conf`
+
+Use `/etc/lemonade/lemonade.conf` for base settings, add local overrides as numbered drop-ins under `/etc/lemonade/conf.d/`, and keep secrets like `LEMONADE_API_KEY` in `/etc/lemonade/conf.d/zz-secrets.conf`.
+
+Edit the base configuration file:
 
 ```bash
 sudo nano /etc/lemonade/lemonade.conf
 ```
 
-Secrets, like the LEMONADE_API_KEY secret, are defined in `/etc/lemonade/secrets.conf`
+Create a drop-in override file:
 
 ```bash
-sudo nano /etc/lemonade/secrets.conf
+sudo nano /etc/lemonade/conf.d/50-local.conf
 ```
+
+Secrets, like `LEMONADE_API_KEY`, are defined in `/etc/lemonade/conf.d/zz-secrets.conf`:
+
+```bash
+sudo nano /etc/lemonade/conf.d/zz-secrets.conf
+```
+
+Using `/etc/lemonade/conf.d/` for local overrides keeps them separate from the package-provided base config and is the recommended path for persistent customization.
 
 After making changes to the configuration files, restart the service for changes to take effect:
 
@@ -251,7 +268,7 @@ sudo systemctl restart lemonade-server
 
 **Service File Location:**
 
-The systemd service file is located at `/etc/systemd/system/lemonade-server.service`. This file should not be edited directly as it may be overwritten during package updates. Instead, use the configuration file (`/etc/lemonade/lemonade.conf`) to customize server behavior.
+The systemd service file is located at `/etc/systemd/system/lemonade-server.service`. This file should not be edited directly as it may be overwritten during package updates. Instead, use `/etc/lemonade/lemonade.conf` and `/etc/lemonade/conf.d/*.conf` to customize server behavior.
 
 If you need to make persistent changes to the service file, use systemd's drop-in override mechanism:
 
@@ -261,6 +278,29 @@ sudo systemctl edit lemonade-server
 
 This creates an override file that takes precedence over the original service file and persists across updates.
 
+
+## macOS Installation (Beta)
+
+**Available Installer:**
+- `Lemonade-<VERSION>-Darwin.pkg` - Signed and notarized macOS installer package
+
+**GUI Installation:**
+
+Double-click the `.pkg` file to launch the installer, or run:
+
+```bash
+sudo installer -pkg Lemonade-<VERSION>-Darwin.pkg -target /
+```
+
+**Silent Installation:**
+
+```bash
+sudo installer -pkg Lemonade-<VERSION>-Darwin.pkg -target /
+```
+
+The macOS installer places binaries in `/usr/local/bin`, so `lemonade-server` is available in PATH immediately after installation.
+
+> **Note:** macOS support is currently in beta. The llama.cpp backend with Metal acceleration is supported on Apple Silicon Macs.
 
 <!--This file was originally licensed under Apache 2.0. It has been modified.
 Modifications Copyright (c) 2025 AMD-->

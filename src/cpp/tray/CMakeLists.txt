@@ -71,12 +71,16 @@ endif()
 set(COMMON_SOURCES
     main.cpp
     tray_app.cpp
+    agent_launcher.cpp
     server_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../server/cli_parser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../server/recipe_options.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../server/system_info.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/utils/json_utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/utils/process_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../server/backends/backend_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../server/utils/path_utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../server/utils/version_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../server/utils/wmi_helper.cpp
     platform/tray_factory.cpp
 )
@@ -175,6 +179,7 @@ if(WIN32)
     )
 
     target_link_libraries(lemonade-tray PRIVATE
+        nlohmann_json::nlohmann_json
         user32
         shell32
     )
@@ -190,6 +195,10 @@ if(WIN32)
     # ============================================================
     add_executable(lemonade-log-viewer
         log-viewer.cpp
+    )
+
+    target_link_libraries(lemonade-log-viewer PRIVATE
+        nlohmann_json::nlohmann_json
     )
 
     set_target_properties(lemonade-log-viewer PROPERTIES
@@ -233,9 +242,15 @@ if(UNIX AND NOT APPLE)
     if(PKG_CONFIG_FOUND)
         pkg_check_modules(SYSTEMD QUIET libsystemd)
         if(SYSTEMD_FOUND)
+            if(NOT DEFINED LEMONADE_SYSTEMD_UNIT_NAME)
+                set(LEMONADE_SYSTEMD_UNIT_NAME "lemonade-server.service" CACHE STRING
+                    "Systemd unit name to match for journald log mode (overridable at runtime via LEMONADE_SYSTEMD_UNIT env var)")
+            endif()
             target_include_directories(lemonade-server PRIVATE ${SYSTEMD_INCLUDE_DIRS})
             target_link_libraries(lemonade-server PRIVATE ${SYSTEMD_LIBRARIES})
-            target_compile_definitions(lemonade-server PRIVATE HAVE_SYSTEMD)
+            target_compile_definitions(lemonade-server PRIVATE
+                HAVE_SYSTEMD
+                LEMONADE_SYSTEMD_UNIT_NAME="${LEMONADE_SYSTEMD_UNIT_NAME}")
         endif()
     endif()
 endif()

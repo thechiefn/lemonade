@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     nodejs \
     npm \
+    libdrm-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -56,10 +57,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     libssl3 \
     zlib1g \
+    libdrm2 \
     vulkan-tools \
     libvulkan1 \
     unzip \
     libgomp1 \
+    libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create application directory

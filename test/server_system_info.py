@@ -120,18 +120,20 @@ MOCK_HARDWARE_CONFIGS = {
                     "cores": 16,
                     "threads": 32,
                     "available": True,
+                    "family": "x86_64",
                 },
-                "amd_igpu": {"name": "None", "available": False},
+                "amd_igpu": {"name": "None", "available": False, "family": ""},
                 "amd_dgpu": [
                     {
                         "name": "AMD Radeon RX 7900 XTX",  # gfx1100 - RDNA3
                         "vram_gb": 24.0,
                         "driver_version": "31.0.24033.1003",
                         "available": True,
+                        "family": "gfx110X",
                     }
                 ],
                 "nvidia_dgpu": [],
-                "npu": {"name": "None", "available": False},
+                "amd_npu": {"name": "None", "available": False, "family": ""},
             },
         },
         "expected_supported": {
@@ -143,8 +145,8 @@ MOCK_HARDWARE_CONFIGS = {
             "llamacpp": ["metal"],
             "whispercpp": ["npu"],  # npu backend requires XDNA2 NPU
             # NPU recipes unsupported: CPU is "Ryzen 9 7950X" (no "Ryzen AI" -> no XDNA2)
-            "flm": ["default"],
-            "ryzenai-llm": ["default"],
+            "flm": ["npu"],
+            "ryzenai-llm": ["npu"],
         },
     },
     # Windows x86_64 with AMD iGPU (Strix Point - ROCm-capable) and NPU
@@ -166,18 +168,21 @@ MOCK_HARDWARE_CONFIGS = {
                     "cores": 12,
                     "threads": 24,
                     "available": True,
+                    "family": "x86_64",
                 },
                 "amd_igpu": {
                     "name": "AMD Radeon 890M",  # gfx1150 - Strix Point
                     "vram_gb": 8.0,
                     "available": True,
+                    "family": "gfx1150",
                 },
                 "amd_dgpu": [],
                 "nvidia_dgpu": [],
-                "npu": {
-                    "name": "AMD NPU (Ryzen AI 300 series)",
+                "amd_npu": {
+                    "name": "AMD Ryzen AI 9 HX 370",
                     "available": True,
                     "power_mode": "default",
+                    "family": "XDNA2",
                 },
             },
         },
@@ -185,8 +190,8 @@ MOCK_HARDWARE_CONFIGS = {
             "llamacpp": ["vulkan", "rocm", "cpu"],
             "whispercpp": ["npu", "cpu"],  # npu supported on XDNA2, cpu on x86_64
             "sd-cpp": ["cpu"],
-            "flm": ["default"],
-            "ryzenai-llm": ["default"],
+            "flm": ["npu"],
+            "ryzenai-llm": ["npu"],
         },
         "expected_unsupported": {
             "llamacpp": ["metal"],
@@ -212,8 +217,9 @@ MOCK_HARDWARE_CONFIGS = {
                     "cores": 24,
                     "threads": 32,
                     "available": True,
+                    "family": "x86_64",
                 },
-                "amd_igpu": {"name": "None", "available": False},
+                "amd_igpu": {"name": "None", "available": False, "family": ""},
                 "amd_dgpu": [],
                 "nvidia_dgpu": [
                     {
@@ -222,7 +228,7 @@ MOCK_HARDWARE_CONFIGS = {
                         "available": True,
                     }
                 ],
-                "npu": {"name": "None", "available": False},
+                "amd_npu": {"name": "None", "available": False, "family": ""},
             },
         },
         "expected_supported": {
@@ -235,8 +241,8 @@ MOCK_HARDWARE_CONFIGS = {
             "whispercpp": ["npu"],  # npu backend requires XDNA2 NPU
             # NPU recipes unsupported: CPU is "Intel Core i9-13900K" (no Ryzen AI)
             "sd-cpp": ["rocm"],
-            "flm": ["default"],
-            "ryzenai-llm": ["default"],
+            "flm": ["npu"],
+            "ryzenai-llm": ["npu"],
         },
     },
     # Windows x86_64 with AMD iGPU but NOT ROCm-capable (older GPU)
@@ -258,15 +264,17 @@ MOCK_HARDWARE_CONFIGS = {
                     "cores": 8,
                     "threads": 16,
                     "available": True,
+                    "family": "x86_64",
                 },
                 "amd_igpu": {
                     "name": "AMD Radeon 680M",  # gfx1030 - RDNA2, not ROCm-supported
                     "vram_gb": 2.0,
                     "available": True,
+                    "family": "",
                 },
                 "amd_dgpu": [],
                 "nvidia_dgpu": [],
-                "npu": {"name": "None", "available": False},
+                "amd_npu": {"name": "None", "available": False, "family": ""},
             },
         },
         "expected_supported": {
@@ -279,8 +287,8 @@ MOCK_HARDWARE_CONFIGS = {
             "whispercpp": ["npu"],  # npu backend requires XDNA2 NPU
             # NPU recipes unsupported: CPU is "Ryzen 7 6800U" (no Ryzen AI)
             "sd-cpp": ["rocm"],
-            "flm": ["default"],
-            "ryzenai-llm": ["default"],
+            "flm": ["npu"],
+            "ryzenai-llm": ["npu"],
         },
     },
     # macOS ARM64 (Apple Silicon) - ONLY RUN ON MACOS
@@ -297,11 +305,19 @@ MOCK_HARDWARE_CONFIGS = {
                     "cores": 14,
                     "threads": 14,
                     "available": True,
+                    "family": "arm64",
                 },
-                "amd_igpu": {"name": "None", "available": False},
+                "amd_igpu": {"name": "None", "available": False, "family": ""},
                 "amd_dgpu": [],
                 "nvidia_dgpu": [],
-                "npu": {"name": "None", "available": False},
+                "amd_npu": {"name": "None", "available": False, "family": ""},
+                "metal": {
+                    "name": "Apple M3 Max",
+                    "available": True,
+                    "vram_gb": 64.0,
+                    "driver_version": "Metal",
+                    "family": "metal",
+                },
             },
         },
         "expected_supported": {
@@ -311,8 +327,8 @@ MOCK_HARDWARE_CONFIGS = {
             "llamacpp": ["vulkan", "rocm", "cpu"],
             "whispercpp": ["npu", "cpu"],  # whispercpp is Windows-only
             "sd-cpp": ["cpu", "rocm"],
-            "flm": ["default"],
-            "ryzenai-llm": ["default"],
+            "flm": ["npu"],
+            "ryzenai-llm": ["npu"],
         },
     },
     # Linux x86_64 with no AMD GPU - ONLY RUN ON LINUX
@@ -329,23 +345,25 @@ MOCK_HARDWARE_CONFIGS = {
                     "cores": 64,
                     "threads": 128,
                     "available": True,
+                    "family": "x86_64",
                 },
-                "amd_igpu": {"name": "None", "available": False},
+                "amd_igpu": {"name": "None", "available": False, "family": ""},
                 "amd_dgpu": [],
                 "nvidia_dgpu": [],
-                "npu": {"name": "None", "available": False},
+                "amd_npu": {"name": "None", "available": False, "family": ""},
             },
         },
         "expected_supported": {
             "llamacpp": ["vulkan", "cpu"],
             "sd-cpp": ["cpu"],
+            "whispercpp": ["cpu", "vulkan"],  # whispercpp CPU + Vulkan supported on Linux
         },
         "expected_unsupported": {
             "llamacpp": ["metal", "rocm"],
-            "whispercpp": ["npu", "cpu"],  # whispercpp is Windows-only
+            "whispercpp": ["npu"],  # NPU is Windows-only; CPU and Vulkan supported on Linux
             "sd-cpp": ["rocm"],
-            "flm": ["default"],
-            "ryzenai-llm": ["default"],
+            "flm": ["npu"],
+            "ryzenai-llm": ["npu"],
         },
     },
     # Linux x86_64 with AMD RDNA3 dGPU (ROCm-capable) - ONLY RUN ON LINUX
@@ -362,29 +380,32 @@ MOCK_HARDWARE_CONFIGS = {
                     "cores": 16,
                     "threads": 32,
                     "available": True,
+                    "family": "x86_64",
                 },
-                "amd_igpu": {"name": "None", "available": False},
+                "amd_igpu": {"name": "None", "available": False, "family": ""},
                 "amd_dgpu": [
                     {
                         "name": "AMD Radeon RX 7900 XTX",  # gfx1100 - RDNA3
                         "vram_gb": 24.0,
                         "driver_version": "6.5.0",
                         "available": True,
+                        "family": "gfx110X",
                     }
                 ],
                 "nvidia_dgpu": [],
-                "npu": {"name": "None", "available": False},
+                "amd_npu": {"name": "None", "available": False, "family": ""},
             },
         },
         "expected_supported": {
             "llamacpp": ["vulkan", "rocm", "cpu"],
             "sd-cpp": ["cpu", "rocm"],
+            "whispercpp": ["cpu", "vulkan"],  # whispercpp CPU + Vulkan supported on Linux
         },
         "expected_unsupported": {
             "llamacpp": ["metal"],
-            "whispercpp": ["npu", "cpu"],  # whispercpp is Windows-only
-            "flm": ["default"],  # Windows NPU only
-            "ryzenai-llm": ["default"],
+            "whispercpp": ["npu"],  # NPU is Windows-only; CPU and Vulkan supported on Linux
+            "flm": ["npu"],  # Windows NPU only
+            "ryzenai-llm": ["npu"],
         },
     },
     # Linux x86_64 with AMD GPU that doesn't support ROCm (RDNA2) - ONLY RUN ON LINUX
@@ -401,30 +422,33 @@ MOCK_HARDWARE_CONFIGS = {
                     "cores": 16,
                     "threads": 32,
                     "available": True,
+                    "family": "x86_64",
                 },
-                "amd_igpu": {"name": "None", "available": False},
+                "amd_igpu": {"name": "None", "available": False, "family": ""},
                 "amd_dgpu": [
                     {
                         "name": "AMD Radeon RX 6900 XT",  # gfx1030 - RDNA2, not ROCm-supported
                         "vram_gb": 16.0,
                         "driver_version": "6.5.0",
                         "available": True,
+                        "family": "",
                     }
                 ],
                 "nvidia_dgpu": [],
-                "npu": {"name": "None", "available": False},
+                "amd_npu": {"name": "None", "available": False, "family": ""},
             },
         },
         "expected_supported": {
             "llamacpp": ["vulkan", "cpu"],
             "sd-cpp": ["cpu"],
+            "whispercpp": ["cpu", "vulkan"],  # whispercpp CPU + Vulkan supported on Linux
         },
         "expected_unsupported": {
             "llamacpp": ["metal", "rocm"],  # rocm not supported on RDNA2
-            "whispercpp": ["npu", "cpu"],  # whispercpp is Windows-only
+            "whispercpp": ["npu"],  # NPU is Windows-only; CPU and Vulkan supported on Linux
             "sd-cpp": ["rocm"],
-            "flm": ["default"],
-            "ryzenai-llm": ["default"],
+            "flm": ["npu"],
+            "ryzenai-llm": ["npu"],
         },
     },
 }
@@ -550,9 +574,8 @@ class SystemInfoMockTests(unittest.TestCase):
 
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 env=env,
             )
 
@@ -593,10 +616,12 @@ class SystemInfoMockTests(unittest.TestCase):
                         )
                         backend_info = backends[backend]
                         self.assertTrue(
-                            backend_info.get("supported", False),
-                            f"Expected {recipe}/{backend} to be supported, but got: {backend_info}",
+                            backend_info.get("state", "") != "unsupported",
+                            f"Expected {recipe}/{backend} to be supported, but got state={backend_info.get('state')}: {backend_info}",
                         )
-                        print(f"  [OK] {recipe}/{backend}: supported=True")
+                        print(
+                            f"  [OK] {recipe}/{backend}: state={backend_info.get('state')}"
+                        )
 
                 # Validate expected unsupported backends
                 for recipe, expected_backends in config.get(
@@ -618,10 +643,10 @@ class SystemInfoMockTests(unittest.TestCase):
 
                         backend_info = backends[backend]
                         self.assertFalse(
-                            backend_info.get("supported", False),
-                            f"Expected {recipe}/{backend} to be UNsupported, but got: {backend_info}",
+                            backend_info.get("state", "") != "unsupported",
+                            f"Expected {recipe}/{backend} to be unsupported, but got state={backend_info.get('state')}: {backend_info}",
                         )
-                        print(f"  [OK] {recipe}/{backend}: supported=False")
+                        print(f"  [OK] {recipe}/{backend}: state=unsupported")
 
             finally:
                 # Stop the server

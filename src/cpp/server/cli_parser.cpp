@@ -1,9 +1,6 @@
 #include <lemon/cli_parser.h>
 #include <lemon/recipe_options.h>
 #include <lemon/version.h>
-#include <iostream>
-#include <cctype>
-#include <cstdlib>
 
 #ifdef LEMONADE_TRAY
 #define APP_NAME "lemonade-server"
@@ -57,6 +54,12 @@ static void add_serve_options(CLI::App* serve, ServerConfig& config) {
         ->expected(0, 1)
         ->default_val(config.no_broadcast);
 
+    serve->add_option("--global-timeout", config.global_timeout,
+                   "Global timeout for HTTP requests, inference, and readiness checks in seconds")
+        ->envname("LEMONADE_GLOBAL_TIMEOUT")
+        ->type_name("SECONDS")
+        ->default_val(config.global_timeout);
+
     // Multi-model support: Max loaded models per type slot
     serve->add_option("--max-loaded-models", config.max_loaded_models,
                    "Max models per type slot (LLMs, audio, image, etc.). Use -1 for unlimited.")
@@ -100,17 +103,33 @@ CLIParser::CLIParser()
 
     // List
     CLI::App* list = app_.add_subcommand("list", "List available models");
+    list->add_option("--port", config_.port, "Port number the server is running on")
+        ->envname("LEMONADE_PORT")
+        ->type_name("PORT")
+        ->default_val(config_.port);
+    list->add_option("--host", config_.host, "Host the server is running on")
+        ->envname("LEMONADE_HOST")
+        ->type_name("HOST")
+        ->default_val(config_.host);
 
     // Pull
     CLI::App* pull = app_.add_subcommand("pull", "Download a model");
-    pull->add_option("model", tray_config_.model, "The model to download")
+    pull->add_option("model", tray_config_.model, "The model to download. Can be a name or JSON file")
         ->type_name("MODEL")
         ->required();
+    pull->add_option("--port", config_.port, "Port number the server is running on")
+        ->envname("LEMONADE_PORT")
+        ->type_name("PORT")
+        ->default_val(config_.port);
+    pull->add_option("--host", config_.host, "Host the server is running on")
+        ->envname("LEMONADE_HOST")
+        ->type_name("HOST")
+        ->default_val(config_.host);
     pull->add_option("--checkpoint", tray_config_.checkpoint, "Hugging Face checkpoint (format: org/model:variant) OR an absolute local path to a model directory. When a local path is provided, files are copied to the HuggingFace cache and registered.")
         ->type_name("CHECKPOINT");
     pull->add_option("--recipe", tray_config_.recipe, "Inference recipe to use. Required when using a local path.")
         ->type_name("RECIPE")
-        ->check(CLI::IsMember({"llamacpp", "flm", "ryzenai-llm", "whispercpp"}));
+        ->check(CLI::IsMember({"llamacpp", "flm", "ryzenai-llm", "whispercpp", "sd-cpp"}));
     pull->add_flag("--reasoning", tray_config_.is_reasoning, "Mark model as a reasoning model (e.g., DeepSeek-R1). Adds 'reasoning' label to model metadata.");
     pull->add_flag("--vision", tray_config_.is_vision, "Mark model as a vision model (multimodal). Adds 'vision' label to model metadata.");
     pull->add_flag("--embedding", tray_config_.is_embedding, "Mark model as an embedding model. Adds 'embeddings' label to model metadata. For use with /api/v1/embeddings endpoint.");
@@ -122,15 +141,77 @@ CLIParser::CLIParser()
     // Delete
     CLI::App* del = app_.add_subcommand("delete", "Delete a model");
     del->add_option("model", tray_config_.model, "The model to delete")->required();
+    del->add_option("--port", config_.port, "Port number the server is running on")
+        ->envname("LEMONADE_PORT")
+        ->type_name("PORT")
+        ->default_val(config_.port);
+    del->add_option("--host", config_.host, "Host the server is running on")
+        ->envname("LEMONADE_HOST")
+        ->type_name("HOST")
+        ->default_val(config_.host);
 
     // Status
     CLI::App* status = app_.add_subcommand("status", "Check server status");
+    status->add_option("--port", config_.port, "Port number the server is running on")
+        ->envname("LEMONADE_PORT")
+        ->type_name("PORT")
+        ->default_val(config_.port);
+    status->add_option("--host", config_.host, "Host the server is running on")
+        ->envname("LEMONADE_HOST")
+        ->type_name("HOST")
+        ->default_val(config_.host);
+
+    // Logs
+    CLI::App* logs = app_.add_subcommand("logs", "Show server logs in web app");
+    logs->add_option("--port", config_.port, "Port number the server is running on")
+        ->envname("LEMONADE_PORT")
+        ->type_name("PORT")
+        ->default_val(config_.port);
+    logs->add_option("--host", config_.host, "Host the server is running on")
+        ->envname("LEMONADE_HOST")
+        ->type_name("HOST")
+        ->default_val(config_.host);
 
     // Stop
     CLI::App* stop = app_.add_subcommand("stop", "Stop the server");
+    stop->add_option("--port", config_.port, "Port number the server is running on")
+        ->envname("LEMONADE_PORT")
+        ->type_name("PORT")
+        ->default_val(config_.port);
+    stop->add_option("--host", config_.host, "Host the server is running on")
+        ->envname("LEMONADE_HOST")
+        ->type_name("HOST")
+        ->default_val(config_.host);
 
     // Recipes
-    CLI::App* recipes = app_.add_subcommand("recipes", "List execution backends");
+    CLI::App* recipes = app_.add_subcommand("recipes", "List and manage execution backends");
+    recipes->add_option("--install", tray_config_.install_backend,
+                        "Install or update a backend (format: recipe:backend)");
+    recipes->add_option("--uninstall", tray_config_.uninstall_backend,
+                        "Uninstall a backend (format: recipe:backend)");
+
+    // Launch
+    CLI::App* launch = app_.add_subcommand("launch", "Launch a coding agent connected to a running Lemonade server");
+    launch->add_option("agent", tray_config_.launch_agent, "Agent to launch (claude or codex)")
+        ->required()
+        ->check(CLI::IsMember({"claude", "codex"}));
+    launch->add_option("-m,--model", tray_config_.launch_model, "Model to load and use")
+        ->required()
+        ->type_name("MODEL");
+    launch->add_option("--llamacpp-args", tray_config_.launch_llamacpp_args,
+        "Custom llama-server arguments for launch; when set, launch defaults are skipped")
+        ->type_name("ARGS");
+    launch->add_flag("--use-recipe", tray_config_.launch_use_recipe,
+        "Use the model's saved recipe options instead of launch llama.cpp defaults")
+        ->default_val(tray_config_.launch_use_recipe);
+    launch->add_option("--host", config_.host, "Host the server is running on")
+        ->envname("LEMONADE_HOST")
+        ->type_name("HOST")
+        ->default_val(config_.host);
+    launch_port_option_ = launch->add_option("--port", config_.port, "Port number the server is running on")
+        ->envname("LEMONADE_PORT")
+        ->type_name("PORT")
+        ->default_val(config_.port);
 
     // Tray
     CLI::App* tray = app_.add_subcommand("tray", "Launch tray interface for running server");
@@ -151,6 +232,9 @@ int CLIParser::parse(int argc, char** argv) {
 
 #ifdef LEMONADE_TRAY
         tray_config_.command = app_.get_subcommands().at(0)->get_name();
+        if (launch_port_option_ != nullptr) {
+            tray_config_.launch_port_specified = launch_port_option_->count() > 0;
+        }
 #endif
         should_continue_ = true;
         exit_code_ = 0;

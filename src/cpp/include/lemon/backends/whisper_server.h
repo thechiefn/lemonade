@@ -11,24 +11,27 @@ namespace backends {
 
 class WhisperServer : public WrappedServer, public IAudioServer {
 public:
+#ifndef LEMONADE_TRAY
+    static InstallParams get_install_params(const std::string& backend, const std::string& version);
+#endif
+
     inline static const BackendSpec SPEC = BackendSpec(
-    // recipe
         "whispercpp",
-    // executable
 #ifdef _WIN32
         "whisper-server.exe"
 #else
         "whisper-server"
 #endif
+#ifndef LEMONADE_TRAY
+        , get_install_params
+#endif
     );
 
-    explicit WhisperServer(const std::string& log_level = "info",
-                          ModelManager* model_manager = nullptr);
+    explicit WhisperServer(const std::string& log_level,
+                          ModelManager* model_manager,
+                          BackendManager* backend_manager);
 
     ~WhisperServer() override;
-
-    // WrappedServer interface
-    void install(const std::string& backend = "") override;
 
     void load(const std::string& model_name,
              const ModelInfo& model_info,
@@ -65,6 +68,13 @@ private:
                                          const json& params,
                                          bool translate);
 
+    // Forward audio data directly (no file I/O) using multipart form-data
+    json forward_multipart_audio_data(const std::string& audio_data,
+                                      const std::string& filename,
+                                      const json& params,
+                                      bool translate);
+
+    std::string model_path_;
     std::filesystem::path temp_dir_;  // Directory for temporary audio files
 };
 

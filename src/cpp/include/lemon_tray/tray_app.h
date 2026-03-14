@@ -65,9 +65,12 @@ private:
     int execute_status_command();
     int execute_stop_command();
     int execute_recipes_command();
+    int execute_logs_command();
+    int execute_launch_command();
 
     // Helper functions for command execution
     bool is_server_running_on_port(int port);
+    bool is_running_under_systemd();
     std::pair<int, int> get_server_info();  // Returns {pid, port}
     bool start_ephemeral_server(int port);
     int server_call(std::function<int(std::unique_ptr<ServerManager> const &)> to_call);

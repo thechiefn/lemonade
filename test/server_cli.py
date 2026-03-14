@@ -22,22 +22,29 @@ Usage:
     python server_cli.py --server-binary /path/to/lemonade-server
 """
 
-import unittest
-import subprocess
-import time
-import socket
-import sys
-import os
 import argparse
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+import urllib.error
+import urllib.request
 
+from utils.server_base import _stop_server_via_systemd
 from utils.test_models import (
-    PORT,
     ENDPOINT_TEST_MODEL,
-    TIMEOUT_MODEL_OPERATION,
+    PORT,
     TIMEOUT_DEFAULT,
+    TIMEOUT_MODEL_OPERATION,
+    USER_MODEL_MAIN_CHECKPOINT,
+    USER_MODEL_NAME,
     get_default_server_binary,
 )
-from utils.server_base import _stop_server_via_systemd
 
 # Global configuration
 _config = {
@@ -325,11 +332,12 @@ class PersistentServerCLITests(CLITestBase):
                 f"Output should contain '{recipe}' recipe: {output}",
             )
 
-        # Should contain status indicators (installed, supported, unsupported)
+        # Should contain status indicators from backend state model
         output_lower = output.lower()
         has_status = (
             "installed" in output_lower
-            or "supported" in output_lower
+            or "installable" in output_lower
+            or "update_required" in output_lower
             or "unsupported" in output_lower
         )
         self.assertTrue(
@@ -349,6 +357,113 @@ class PersistentServerCLITests(CLITestBase):
         )
 
         print(f"[OK] Recipes command output shows recipe/backend status")
+
+    def test_007_pull_json(self):
+        """Test pull command to download a model via JSON file"""
+        json_file = os.path.join(tempfile.gettempdir(), "lemonade_pull_json.json")
+        with open(json_file, "w") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "id": USER_MODEL_NAME,
+                        "checkpoint": USER_MODEL_MAIN_CHECKPOINT,
+                        "recipe": "llamacpp",
+                    }
+                )
+            )
+
+        result = self.assertCommandSucceeds(
+            ["pull", json_file], timeout=TIMEOUT_MODEL_OPERATION
+        )
+        # Pull should succeed
+        output = result.stdout.lower() + result.stderr.lower()
+        self.assertFalse(
+            "error" in output and "failed" in output,
+            f"Pull should not report errors: {result.stdout}",
+        )
+
+    def test_008_pull_malformed_json(self):
+        """Test pull command to download a model via JSON file"""
+        json_file = os.path.join(
+            tempfile.gettempdir(), "lemonade_pull_malformed_json.json"
+        )
+        with open(json_file, "w") as f:
+            f.write('{"checkpoint:')
+
+        result = self.assertCommandFails(
+            ["pull", json_file], timeout=TIMEOUT_MODEL_OPERATION
+        )
+        # Pull should fail
+        output = result.stdout.lower() + result.stderr.lower()
+        self.assertTrue(
+            "error" in output,
+            f"Pull should fail: {result.stdout}",
+        )
+
+    def _get_test_backend(self):
+        """Get a lightweight test backend based on platform."""
+        import sys
+
+        if sys.platform == "darwin":
+            return "llamacpp", "metal"
+        else:
+            return "llamacpp", "cpu"
+
+    def test_009_recipes_install(self):
+        """Test recipes --install installs a backend."""
+        recipe, backend = self._get_test_backend()
+        target = f"{recipe}:{backend}"
+
+        # Uninstall first (cleanup)
+        run_cli_command(["recipes", "--uninstall", target], timeout=120)
+
+        # Install
+        result = self.assertCommandSucceeds(
+            ["recipes", "--install", target], timeout=300
+        )
+        output = result.stdout.lower()
+        self.assertTrue(
+            "install" in output or "success" in output,
+            f"Expected install confirmation in output: {result.stdout}",
+        )
+
+        # Verify via recipes list
+        result = self.assertCommandSucceeds(["recipes"])
+        self.assertIn(
+            "installed",
+            result.stdout.lower(),
+            f"Expected 'installed' status after install: {result.stdout}",
+        )
+        print(f"[OK] recipes --install {target} succeeded")
+
+    def test_010_recipes_uninstall(self):
+        """Test recipes --uninstall removes a backend."""
+        recipe, backend = self._get_test_backend()
+        target = f"{recipe}:{backend}"
+
+        # Ensure installed first
+        run_cli_command(["recipes", "--install", target], timeout=300)
+
+        # Uninstall
+        result = self.assertCommandSucceeds(
+            ["recipes", "--uninstall", target], timeout=120
+        )
+        output = result.stdout.lower()
+        self.assertTrue(
+            "uninstall" in output or "success" in output,
+            f"Expected uninstall confirmation in output: {result.stdout}",
+        )
+        print(f"[OK] recipes --uninstall {target} succeeded")
+
+    def test_011_recipes_reinstall(self):
+        """Re-install after test to leave system in clean state."""
+        recipe, backend = self._get_test_backend()
+        target = f"{recipe}:{backend}"
+
+        result = self.assertCommandSucceeds(
+            ["recipes", "--install", target], timeout=300
+        )
+        print(f"[OK] Re-installed {target} for clean state")
 
 
 class EphemeralCLITests(CLITestBase):
@@ -381,6 +496,23 @@ class EphemeralCLITests(CLITestBase):
         self.assertTrue(
             len(result.stdout) > 0 or len(result.stderr) > 0,
             "Version command should produce output",
+        )
+
+    def test_001_help_lists_whispercpp_args_no_server(self):
+        """Test help output documents whisper.cpp custom args support."""
+        self.assertFalse(is_server_running(), "Server should not be running")
+        result = self.assertCommandSucceeds(["serve", "--help"])
+        output = result.stdout + result.stderr
+
+        self.assertIn(
+            "--whispercpp-args",
+            output,
+            f"Serve help should document --whispercpp-args: {output}",
+        )
+        self.assertIn(
+            "LEMONADE_WHISPERCPP_ARGS",
+            output,
+            f"Serve help should document LEMONADE_WHISPERCPP_ARGS: {output}",
         )
 
     def test_002_list_ephemeral(self):
@@ -446,7 +578,60 @@ class EphemeralCLITests(CLITestBase):
             except subprocess.TimeoutExpired:
                 server_process.kill()
 
-    def test_005_status_when_stopped(self):
+    def test_005_duplicate_serve_reports_existing_server(self):
+        """Test duplicate serve prints an explicit already-running message."""
+        self.assertFalse(is_server_running(), "Server should not be running initially")
+
+        first_cmd = [_config["server_binary"], "serve"]
+        second_cmd = [_config["server_binary"], "serve"]
+        if os.name == "nt" or os.getenv("LEMONADE_CI_MODE"):
+            first_cmd.append("--no-tray")
+            second_cmd.append("--no-tray")
+
+        first_process = subprocess.Popen(
+            first_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        try:
+            self.assertTrue(
+                wait_for_server_start(timeout=60),
+                "First server should start within 60 seconds",
+            )
+
+            duplicate_result = subprocess.run(
+                second_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            duplicate_output = duplicate_result.stdout + duplicate_result.stderr
+            duplicate_output_lower = duplicate_output.lower()
+
+            self.assertNotEqual(
+                duplicate_result.returncode,
+                0,
+                f"Duplicate serve should fail: {duplicate_output}",
+            )
+            self.assertTrue(
+                "already running" in duplicate_output_lower
+                or "duplicate instance now exiting" in duplicate_output_lower,
+                f"Duplicate serve should explain why it exited: {duplicate_output}",
+            )
+        finally:
+            stop_server()
+            first_process.terminate()
+            try:
+                first_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                first_process.kill()
+
+    def test_006_status_when_stopped(self):
         """Test status command when server is not running."""
         self.assertFalse(is_server_running(), "Server should not be running")
 
@@ -461,7 +646,7 @@ class EphemeralCLITests(CLITestBase):
             f"Status should indicate server is not running: {result.stdout}",
         )
 
-    def test_006_recipes_no_server(self):
+    def test_007_recipes_no_server(self):
         """Test recipes command works without server running."""
         self.assertFalse(is_server_running(), "Server should not be running")
 
@@ -489,6 +674,104 @@ class EphemeralCLITests(CLITestBase):
             )
 
         print("[OK] Recipes command works without server running")
+
+    def test_008_status_reports_http_port_not_websocket(self):
+        """Test that status reports the HTTP port, not the WebSocket port.
+
+        Regression test: the router listens on both an HTTP port and a
+        WebSocket port (allocated from 9000+).  get_server_info() used to
+        return whichever port appeared first in the OS TCP table, which is
+        non-deterministic.  When the HTTP port was above the WS range
+        (e.g. 11434) the status command could return 9000 instead, causing
+        the Electron app to connect to the wrong port.
+
+        This test starts the server on port 11434 (above the WS range)
+        and verifies that `status` returns 11434 and that the reported
+        port responds to a normal HTTP request.
+        """
+        TEST_PORT = 11434
+        self.assertFalse(is_server_running(TEST_PORT), "Server should not be running")
+
+        # Start server on port 11434 (above the WebSocket port range 9000+)
+        cmd = [_config["server_binary"], "serve", "--port", str(TEST_PORT)]
+        if os.name == "nt" or os.getenv("LEMONADE_CI_MODE"):
+            cmd.append("--no-tray")
+
+        server_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        try:
+            self.assertTrue(
+                wait_for_server_start(port=TEST_PORT, timeout=60),
+                f"Server should start on port {TEST_PORT}",
+            )
+            time.sleep(3)  # Let WebSocket server bind its port too
+
+            # Run `lemonade-server status` and extract the reported port
+            result = self.assertCommandSucceeds(["status"])
+            output = result.stdout + result.stderr
+
+            port_match = (
+                re.search(r"port[:\s]+(\d+)", output, re.IGNORECASE)
+                or re.search(r"localhost:(\d+)", output, re.IGNORECASE)
+                or re.search(r"127\.0\.0\.1:(\d+)", output, re.IGNORECASE)
+            )
+            self.assertIsNotNone(
+                port_match, f"Could not parse port from status output: {output}"
+            )
+            reported_port = int(port_match.group(1))
+
+            # The reported port must be the HTTP port, not the WebSocket port
+            self.assertEqual(
+                reported_port,
+                TEST_PORT,
+                f"Status reported port {reported_port} but server was started on "
+                f"{TEST_PORT}. get_server_info() may be returning the WebSocket port.",
+            )
+
+            # Double-check: the reported port must respond to HTTP
+            try:
+                url = f"http://127.0.0.1:{reported_port}/live"
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    status_code = resp.getcode()
+            except urllib.error.URLError as e:
+                self.fail(f"Port {reported_port} did not respond to HTTP /live: {e}")
+
+            self.assertEqual(status_code, 200)
+            print(f"[OK] Status correctly reports HTTP port {reported_port}")
+
+        finally:
+            server_process.terminate()
+            try:
+                server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server_process.kill()
+
+    def test_009_recipes_install_no_server(self):
+        """Test recipes --install works when no server is running (starts ephemeral server)."""
+        import sys
+
+        if sys.platform == "darwin":
+            target = "llamacpp:metal"
+        else:
+            target = "llamacpp:cpu"
+
+        self.assertFalse(is_server_running(), "Server should not be running")
+
+        result = self.assertCommandSucceeds(
+            ["recipes", "--install", target], timeout=300
+        )
+        output = result.stdout.lower()
+        self.assertTrue(
+            "install" in output or "success" in output,
+            f"Expected install result in output: {result.stdout}",
+        )
+        print(f"[OK] recipes --install {target} works without persistent server")
 
 
 def run_cli_tests():

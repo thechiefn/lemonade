@@ -16,6 +16,7 @@ struct ServerConfig {
     json recipe_options = json::object();
     std::string extra_models_dir = "";  // Secondary directory for GGUF model discovery
     bool no_broadcast = false;  // Disable UDP broadcasting on private networks
+    long global_timeout = 300;    // Default global timeout in seconds
 
     // Multi-model support: Max loaded models per type slot
     int max_loaded_models = 1;
@@ -32,6 +33,13 @@ struct TrayConfig {
 
     std::string model;
 
+    // Launch command options
+    std::string launch_agent = "";  // "claude" or "codex"
+    std::string launch_model = "";
+    std::string launch_llamacpp_args = "";
+    bool launch_use_recipe = false;
+    bool launch_port_specified = false;
+
     // Run options
     bool save_options = false;
 
@@ -43,6 +51,10 @@ struct TrayConfig {
     bool is_vision = false;
     bool is_embedding = false;
     bool is_reranking = false;
+
+    // Backend management options (for recipes command)
+    std::string install_backend = "";    // "recipe:backend" format
+    std::string uninstall_backend = "";  // "recipe:backend" format
 };
 
 class CLIParser {
@@ -69,6 +81,7 @@ private:
     ServerConfig config_;
 #ifdef LEMONADE_TRAY
     TrayConfig tray_config_;
+    CLI::Option* launch_port_option_ = nullptr;
 #endif
     bool should_continue_ = true;
     int exit_code_ = 0;

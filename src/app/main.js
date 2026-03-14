@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, shell, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session, screen, webFrameMain, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { exec, spawn, spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const strict = require('assert/strict');
+const dgram = require('dgram');
 
 const DEFAULT_MIN_WIDTH = 400;
 const DEFAULT_MIN_HEIGHT = 600;
@@ -95,6 +96,34 @@ const getHomeDirectory = () => {
   return process.env.HOME || process.env.USERPROFILE || '';
 };
 
+const getLocalInterfaceAddresses = () => {
+  const interfaces = os.networkInterfaces ? os.networkInterfaces() : {};
+  const localAddresses = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+  Object.values(interfaces || {}).forEach((entries) => {
+    if (!Array.isArray(entries)) {
+      return;
+    }
+    entries.forEach((entry) => {
+      if (entry && typeof entry.address === 'string') {
+        localAddresses.add(entry.address);
+      }
+    });
+  });
+
+  return localAddresses;
+};
+
+const isBeaconFromLocalMachine = (address) => {
+  if (!address || typeof address !== 'string') {
+    return false;
+  }
+
+  const normalized = address.replace(/^::ffff:/, '');
+  const localAddresses = getLocalInterfaceAddresses();
+  return localAddresses.has(address) || localAddresses.has(normalized);
+};
+
 const getCacheDirectory = () => {
   const homeDir = getHomeDirectory();
   if (!homeDir) {
@@ -128,6 +157,14 @@ const LAYOUT_SIZE_LIMITS = Object.freeze({
   logsHeight: { min: 100, max: 400 },
 });
 
+const DEFAULT_TTS_SETTINGS = Object.freeze({
+  model: { value: 'kokoro-v1', useDefault: true },
+  userVoice: { value: 'fable', useDefault: true },
+  assistantVoice: { value: 'alloy', useDefault: true },
+  enableTTS: { value: false, useDefault: true },
+  enableUserTTS: { value: false, useDefault: true }
+});
+
 const createDefaultAppSettings = () => ({
   temperature: { ...DEFAULT_APP_SETTINGS.temperature },
   topK: { ...DEFAULT_APP_SETTINGS.topK },
@@ -135,9 +172,10 @@ const createDefaultAppSettings = () => ({
   repeatPenalty: { ...DEFAULT_APP_SETTINGS.repeatPenalty },
   enableThinking: { ...DEFAULT_APP_SETTINGS.enableThinking },
   collapseThinkingByDefault: { ...DEFAULT_APP_SETTINGS.collapseThinkingByDefault },
-  baseURL: { ...DEFAULT_APP_SETTINGS.baseURL},
-  apiKey: { ...DEFAULT_APP_SETTINGS.apiKey},
+  baseURL: { ...DEFAULT_APP_SETTINGS.baseURL },
+  apiKey: { ...DEFAULT_APP_SETTINGS.apiKey },
   layout: { ...DEFAULT_LAYOUT_SETTINGS },
+  tts: {...DEFAULT_TTS_SETTINGS }
 });
 
 const clampValue = (value, min, max) => {
@@ -250,6 +288,19 @@ const sanitizeAppSettings = (incoming = {}) => {
       const value = rawLayout[key];
       if (typeof value === 'number' && Number.isFinite(value)) {
         sanitized.layout[key] = Math.min(Math.max(Math.round(value), min), max);
+      }
+    });
+  }
+
+  // Sanitize TTS settings
+  const rawTTS = incoming.tts;
+  if (rawTTS && typeof rawTTS === 'object') {
+    const ttsKeys = Object.keys(rawTTS);
+    ttsKeys.forEach((key) => {
+      if (rawTTS[key] && typeof rawTTS[key] === 'object') {
+        const useDefault = (typeof rawTTS[key].useDefault === 'boolean') ? rawTTS[key].useDefault : sanitized.tts[key].useDefault;
+        const value = useDefault ? sanitized.tts[key].value : (typeof rawTTS[key].value === 'string' || typeof rawTTS[key].value === 'boolean') ? rawTTS[key].value : sanitized.tts[key].value;
+        sanitized.tts[key] = { value, useDefault };
       }
     });
   }
@@ -434,89 +485,190 @@ function gracefulKillBlocking(processPattern) {
     }
 }
 
+/**
+ * Discovers the lemonade server using UDP broadcast beacons.
+ * The server broadcasts its presence on UDP port 8000 with a JSON payload
+ * containing the service name, hostname, and URL.
+ *
+ * This works for both local and remote servers on the same network.
+ */
 const discoverServerPort = () => {
-  //This is the default port to try macos lemonade server on.
   const DEFAULT_PORT = 8000;
-  const StatusResponseWaitMs = 5000;
+  const BEACON_PORT = 8000;
+  const DISCOVERY_TIMEOUT_MS = 5000;
 
   return new Promise((resolve) => {
-    // Always ensure tray is running on macOS, regardless of server status
+    // Always ensure tray is running on macOS
     ensureTrayRunning().then(() => {
-      exec('lemonade-server status', { timeout: StatusResponseWaitMs }, (error, stdout, stderr) => {
-        if (error || (stdout && stdout.trim().includes('not running'))) {
-          // Server not running, tray should start it
-          if (process.platform === 'darwin') {
-            console.warn('Server not running, tray should start it. Waiting...');
-            setTimeout(() => {
-              exec('lemonade-server status', { timeout: StatusResponseWaitMs }, (error3, stdout3, stderr3) => {
-                if (error3 || (stdout3 && stdout3.trim().includes('not running'))) {
-                  console.warn('Server still not running after waiting, using default port 8000');
-                  resolve(DEFAULT_PORT);
-                  return;
-                }
+      const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      let discovered = false;
+      let timeoutId = null;
 
-                // Parse the response
-                try {
-                  const output = stdout3.trim();
-                  const portMatch = output.match(/port[:\s]+(\d+)/i) ||
-                                   output.match(/localhost:(\d+)/i) ||
-                                   output.match(/127\.0\.0\.1:(\d+)/i);
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        try {
+          socket.close();
+        } catch (e) {
+          // Socket may already be closed
+        }
+      };
 
-                  if (portMatch && portMatch[1]) {
-                    const port = parseInt(portMatch[1], 10);
-                    //Verify parsing since ports can not be less than 0 and not more than 65536 because they are a uint16
-                    if (!isNaN(port) && port > 0 && port < 65536) {
-                      console.log('Discovered server port after tray start:', port);
-                      resolve(port);
-                      return;
-                    }
-                  }
+      socket.on('error', (err) => {
+        console.error('UDP discovery socket error:', err);
+        cleanup();
+        if (!discovered) {
+          discovered = true;
+          const fallbackPort = cachedServerPort || DEFAULT_PORT;
+          console.log(`Falling back to cached port due to socket error: ${fallbackPort}`);
+          resolve(fallbackPort);
+        }
+      });
 
-                  console.warn('Could not parse port from status output:', output);
-                  resolve(DEFAULT_PORT);
-                } catch (parseError) {
-                  console.error('Error parsing status:', parseError);
-                  resolve(DEFAULT_PORT);
-                }
-              });
-            }, 10000); // Wait 10 seconds for tray to start server
-            return;
-          } else {
-            // On non-macOS platforms, just fall back to default
-            console.warn('Failed to discover server port:', error);
-            resolve(DEFAULT_PORT);
-            return;
-          }
+      socket.on('message', (msg, rinfo) => {
+        if (discovered) return;
+
+        // Ignore beacons from other machines. We only derive localhost port
+        // in discovery mode, so remote beacons can cause invalid localhost targets.
+        if (!isBeaconFromLocalMachine(rinfo?.address)) {
+          return;
         }
 
         try {
-          // Parse the output to find the port
-          const output = stdout.trim();
+          const payload = JSON.parse(msg.toString());
 
-          // Try regex pattern to extract port number
-          const portMatch = output.match(/port[:\s]+(\d+)/i) ||
-                           output.match(/localhost:(\d+)/i) ||
-                           output.match(/127\.0\.0\.1:(\d+)/i);
+          // Verify this is a lemonade service beacon
+          if (payload.service === 'lemonade' && payload.url) {
+            console.log(`Discovered lemonade server via UDP beacon from ${rinfo.address}:${rinfo.port}:`, payload);
 
-          if (portMatch && portMatch[1]) {
-            const port = parseInt(portMatch[1], 10);
-            if (!isNaN(port) && port > 0 && port < 65536) {
-              console.log('Discovered server port:', port);
-              resolve(port);
-              return;
+            // Extract port from the URL (format: http://IP:PORT/api/v1/)
+            const urlMatch = payload.url.match(/:(\d+)\//);
+            if (urlMatch && urlMatch[1]) {
+              const port = parseInt(urlMatch[1], 10);
+              if (!isNaN(port) && port > 0 && port < 65536) {
+                discovered = true;
+                cleanup();
+                console.log('Discovered server port via network beacon:', port);
+                resolve(port);
+                return;
+              }
             }
           }
-
-          console.warn('Could not parse port from lemonade-server status output:', output);
-          resolve(DEFAULT_PORT);
         } catch (parseError) {
-          console.error('Error parsing server status:', parseError);
-          resolve(DEFAULT_PORT);
+          // Not a valid JSON beacon, ignore
         }
       });
+
+      socket.on('listening', () => {
+        const address = socket.address();
+        console.log(`UDP discovery listening on ${address.address}:${address.port}`);
+      });
+
+      // Set timeout for discovery
+      timeoutId = setTimeout(() => {
+        if (!discovered) {
+          discovered = true;
+          cleanup();
+          const fallbackPort = cachedServerPort || DEFAULT_PORT;
+          console.log(`UDP discovery timeout, falling back to cached port: ${fallbackPort}`);
+          resolve(fallbackPort);
+        }
+      }, DISCOVERY_TIMEOUT_MS);
+
+      // Bind to the beacon port to receive broadcasts
+      try {
+        socket.bind(BEACON_PORT);
+      } catch (bindError) {
+        console.error('Failed to bind UDP socket:', bindError);
+        cleanup();
+        if (!discovered) {
+          discovered = true;
+          resolve(cachedServerPort || DEFAULT_PORT);
+        }
+      }
     });
   });
 };
+
+/**
+ * Background beacon listener that continuously monitors for lemonade server
+ * UDP beacons on localhost. When a beacon is received with a different port
+ * than the currently cached port, it updates the cached port and broadcasts
+ * the change to all renderer windows.
+ */
+let beaconSocket = null;
+
+const startBeaconListener = async () => {
+  const BEACON_PORT = 8000;
+
+  // Don't listen if an explicit base URL is configured
+  const baseURL = await getBaseURLFromConfig();
+  if (baseURL) {
+    console.log('Beacon listener skipped - using explicit server URL:', baseURL);
+    return;
+  }
+
+  if (beaconSocket) {
+    return; // Already listening
+  }
+
+  const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  beaconSocket = socket;
+
+  socket.on('error', (err) => {
+    console.error('Beacon listener socket error:', err);
+    try { socket.close(); } catch (e) { /* ignore */ }
+    beaconSocket = null;
+
+    // Retry after 10 seconds
+    setTimeout(() => startBeaconListener(), 10000);
+  });
+
+  socket.on('message', (msg, rinfo) => {
+    try {
+      if (!isBeaconFromLocalMachine(rinfo?.address)) {
+        return;
+      }
+
+      const payload = JSON.parse(msg.toString());
+
+      if (payload.service === 'lemonade' && payload.url) {
+        const urlMatch = payload.url.match(/:(\d+)\//);
+        if (urlMatch && urlMatch[1]) {
+          const port = parseInt(urlMatch[1], 10);
+          if (!isNaN(port) && port > 0 && port < 65536 && port !== cachedServerPort) {
+            console.log(`Beacon listener detected server port change: ${cachedServerPort} -> ${port}`);
+            cachedServerPort = port;
+            broadcastServerPortUpdated(port);
+          }
+        }
+      }
+    } catch (e) {
+      // Not a valid JSON beacon, ignore
+    }
+  });
+
+  socket.on('listening', () => {
+    const address = socket.address();
+    console.log(`Beacon listener started on ${address.address}:${address.port}`);
+  });
+
+  try {
+    socket.bind(BEACON_PORT);
+  } catch (bindError) {
+    console.error('Failed to bind beacon listener socket:', bindError);
+    beaconSocket = null;
+
+    // Retry after 10 seconds
+    setTimeout(() => startBeaconListener(), 10000);
+  }
+};
+
+ipcMain.handle('write-clipboard', (_event, text) => {
+  clipboard.writeText(String(text));
+});
 
 // Returns the configured server base URL, or null if using localhost discovery
 ipcMain.handle('get-server-base-url', async () => {
@@ -552,7 +704,7 @@ ipcMain.handle('get-version', async () => {
 });
 
 ipcMain.handle('discover-server-port', async () => {
-  let baseURL = getBaseURLFromConfig();
+  let baseURL = await getBaseURLFromConfig();
   if (baseURL) {
     console.log('Port discovery skipped - using explicit server URL:', baseURL);
     ensureTrayRunning();
@@ -579,6 +731,7 @@ ipcMain.handle('get-system-stats', async () => {
         memory_gb: data.memory_gb || 0,
         gpu_percent: data.gpu_percent,
         vram_gb: data.vram_gb,
+        npu_percent: data.npu_percent,
       };
     }
   } catch (error) {
@@ -591,6 +744,7 @@ ipcMain.handle('get-system-stats', async () => {
     memory_gb: 0,
     gpu_percent: null,
     vram_gb: null,
+    npu_percent: null,
   };
 });
 
@@ -750,6 +904,50 @@ function createWindow() {
     return { action: 'deny' }; // Prevent Electron from opening a new window
   });
 
+  const isHttpUrl = (value) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  // Intercept all anchor clicks inside loaded iframe pages and route them through
+  // window.open so Electron's setWindowOpenHandler opens them in the system browser.
+  const injectIframeLinkInterceptor = (frame) => {
+    if (!frame || !isHttpUrl(frame.url) || frame === mainWindow.webContents.mainFrame) {
+      return;
+    }
+
+    frame.executeJavaScript(`
+      (() => {
+        if (window.__lemonadeExternalLinkInterceptorInstalled) return;
+        window.__lemonadeExternalLinkInterceptorInstalled = true;
+
+        document.addEventListener('click', (event) => {
+          const element = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+          if (!element) return;
+
+          const href = element.href || element.getAttribute('href') || '';
+          if (!/^https?:\\/\\//i.test(href)) return;
+
+          event.preventDefault();
+          event.stopPropagation();
+          window.open(href, '_blank', 'noopener,noreferrer');
+        }, true);
+      })();
+    `).catch(() => {});
+  };
+
+  mainWindow.webContents.on('did-frame-finish-load', (_event, isMainFrame, frameProcessId, frameRoutingId) => {
+    if (isMainFrame) {
+      return;
+    }
+    const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
+    injectIframeLinkInterceptor(frame);
+  });
+
   // Open DevTools in development mode
   if (!app.isPackaged) {
     mainWindow.webContents.openDevTools();
@@ -772,7 +970,14 @@ function createWindow() {
 
 app.on('ready', () => {
   ensureTrayRunning();
+  startBeaconListener();
   createWindow();
+
+  // Allow microphone access for streaming audio transcription.
+  // Only 'media' is auto-approved; all other permissions use Electron's default (deny).
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(permission === 'media');
+  });
 
   // Window control handlers
   ipcMain.on('minimize-window', () => {
@@ -813,6 +1018,13 @@ app.on('ready', () => {
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('will-quit', () => {
+  if (beaconSocket) {
+    try { beaconSocket.close(); } catch (e) { /* ignore */ }
+    beaconSocket = null;
   }
 });
 

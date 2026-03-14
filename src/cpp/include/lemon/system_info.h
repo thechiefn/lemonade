@@ -30,6 +30,9 @@ struct GPUInfo : DeviceInfo {
 struct NPUInfo : DeviceInfo {
     std::string driver_version;
     std::string power_mode;
+    uint64_t tops_max = 0;
+    uint64_t tops_curr = 0;
+    float utilization = 0.0f;
 };
 
 //Enums
@@ -79,42 +82,35 @@ public:
     // Returns empty string if supported, or a reason string if not supported
     static std::string check_recipe_supported(const std::string& recipe);
 
-    // Get all recipes with their support status
-    // Returns a vector of {recipe_name, supported, available, error_message, backends}
+    // Get all recipes with their backend state info
+    // Returns a vector of {recipe_name, backends}
     struct BackendStatus {
         std::string name;
-        bool supported;
-        bool available;
+        std::string state;
         std::string version;
-        std::string error;
+        std::string message;
+        std::string action;
     };
     struct RecipeStatus {
         std::string name;
-        bool supported;
-        bool available;
-        std::string error;
         std::vector<BackendStatus> backends;
     };
     static std::vector<RecipeStatus> get_all_recipe_statuses();
 
-    // Version and installation detection (public for use by backends and helpers)
-    static std::string get_llamacpp_version(const std::string& backend);
-    static std::string get_whispercpp_version(const std::string& backend);
-    static std::string get_kokoro_version(const std::string& backend);
-    static std::string get_sdcpp_version(const std::string& backend);
-    static std::string get_oga_version();
     static std::string get_flm_version();
-    static bool is_llamacpp_installed(const std::string& backend);
-    static bool is_whispercpp_installed(const std::string& backend);
-    static bool is_kokoro_installed(const std::string& backend);
-    static bool is_sdcpp_installed(const std::string& backend);
-    static bool is_ryzenai_serve_available();
+    static std::string get_system_llamacpp_version();
 
     // Device support detection
     static std::string get_rocm_arch();
 
+    // Detect if the device is an iGPU
+    static bool get_has_igpu();
+
     // Generate human-readable error message for unsupported backend
     static std::string get_unsupported_backend_error(const std::string& recipe, const std::string& backend);
+
+    // Check if the process is running under systemd
+    static bool is_running_under_systemd();
 };
 
 // Windows implementation
@@ -147,7 +143,6 @@ private:
     std::string get_npu_power_mode();
     double get_gpu_vram_dxdiag(const std::string& gpu_name);
     double get_gpu_vram_wmi(uint64_t adapter_ram);
-    bool is_supported_ryzen_ai_processor();
 };
 
 // Linux implementation
@@ -189,6 +184,14 @@ public:
     std::vector<GPUInfo> get_nvidia_dgpu_devices() override;
     NPUInfo get_npu_device() override;
 
+    // Override to add macOS-specific fields
+    json get_system_info_dict() override;
+    std::string get_os_version() override;
+
+    // macOS-specific methods
+    std::string get_processor_name();
+    std::string get_physical_memory();
+
     std::vector<GPUInfo> detect_metal_gpus();
 };
 
@@ -198,6 +201,28 @@ std::unique_ptr<SystemInfo> create_system_info();
 // Helper to identify ROCm architecture from GPU name
 // Returns architecture string (e.g., "gfx1150", "gfx1151", "gfx110X", "gfx120X") or empty string if not recognized
 std::string identify_rocm_arch_from_name(const std::string& device_name);
+
+// Check if kernel has CWSR fix for Strix Halo
+bool needs_gfx1151_cwsr_fix();
+
+// FLM status (derived from system-info cache)
+struct FlmStatus {
+    std::string state;     // "unsupported","installable","update_required","action_required","installed"
+    std::string version;
+    std::string message;
+    std::string action;
+
+    bool is_ready() const { return state == "installed"; }
+
+    // Format a user-facing error message (for throwing when FLM is not ready)
+    std::string error_string() const {
+        std::string msg = "FLM is not ready: " + message;
+        if (!action.empty()) {
+            msg += ". " + action;
+        }
+        return msg;
+    }
+};
 
 // Cache management
 class SystemInfoCache {
@@ -225,6 +250,14 @@ public:
 
     // High-level function: Get complete system info (with cache handling and friendly messages)
     static json get_system_info_with_cache();
+
+    // Invalidate recipes portion of cache (hardware stays cached).
+    // Call after installing/upgrading FLM so the next get_system_info_with_cache()
+    // re-evaluates backend availability.
+    static void invalidate_recipes();
+
+    // Get FLM status from cached system-info (single source of truth)
+    static FlmStatus get_flm_status();
 
 private:
     std::string cache_file_path_;
